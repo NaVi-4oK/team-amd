@@ -8,8 +8,8 @@
 
 ```mermaid
 flowchart LR
-    researcher[Исследователь] -->|HTTP: создать Job, запросить статус или результат| aggregator[Агрегатор геофизических данных]
-    aggregator -->|HTTP: Job, статус или выгрузка| researcher
+    researcher[Исследователь] -->|создать Job, запросить статус или результат| aggregator[Агрегатор геофизических данных]
+    aggregator -->|Job, статус или выгрузка| researcher
     aggregator -->|запрос измерений| source[Внешний источник]
 ```
 
