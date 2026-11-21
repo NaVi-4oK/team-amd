@@ -1,0 +1,106 @@
+openapi: 3.1.0
+info:
+  title: Геофизический агрегатор API
+  version: 0.1.0
+  description: Черновой контракт практики 2; HTTP-слой реализуется позже.
+paths:
+  /jobs:
+    post:
+      summary: Создать задание на сбор измерений
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JobRequest' }
+      responses:
+        '202':
+          description: Job создан или возвращён ранее созданный Job для того же ключа и тех же параметров
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '400':
+          description: Неверные поля запроса
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '409':
+          description: Ключ уже использован с другими параметрами
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /jobs/{job_id}:
+    get:
+      summary: Получить состояние Job
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Состояние задания
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404':
+          description: Job не найден
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+  /jobs/{job_id}/result:
+    get:
+      summary: Получить результат завершённого Job
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: format
+          schema: { type: string, enum: [json, csv], default: json }
+      responses:
+        '200': { description: Результат и метаданные }
+        '404':
+          description: Job не найден
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '409':
+          description: Результат ещё не готов или Job завершился ошибкой
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+components:
+  schemas:
+    JobRequest:
+      type: object
+      required: [source, station_id, components, start, end]
+      properties:
+        source: { type: string, minLength: 1 }
+        station_id: { type: string, minLength: 1 }
+        components: { type: array, minItems: 1, items: { type: string } }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+    Job:
+      type: object
+      required: [id, state]
+      properties:
+        id: { type: string }
+        state: { type: string, enum: [Created, Downloading, Processing, Completed, Failed] }
+        error: { $ref: '#/components/schemas/ApiError' }
+    ApiError:
+      type: object
+      required: [code, message, details, correlation_id]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details:
+          type: object
+          properties:
+            field: { type: string }
+        correlation_id: { type: string }
