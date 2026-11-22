@@ -1,0 +1,358 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cli.schema.json",
+  "title": "Контракт локального CLI",
+  "description": "Одна JSON-схема для команд, подаваемых в CLI через stdin или файл, и JSON-ответов CLI. Это не HTTP API.",
+  "$defs": {
+    "timeRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "stop"
+      ],
+      "properties": {
+        "start": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "stop": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "importCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "observatoryId",
+        "publicationState",
+        "cadence",
+        "components",
+        "timeRange",
+        "idempotencyKey"
+      ],
+      "properties": {
+        "command": {
+          "const": "import"
+        },
+        "observatoryId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 3,
+          "description": "Трёхбуквенный код обсерватории из INTERMAGNET HAPI catalog."
+        },
+        "publicationState": {
+          "type": "string",
+          "enum": [
+            "adjusted",
+            "definitive",
+            "quasi-def",
+            "reported",
+            "best-avail"
+          ]
+        },
+        "cadence": {
+          "type": "string",
+          "enum": [
+            "PT1M",
+            "PT1S"
+          ]
+        },
+        "components": {
+          "type": "string",
+          "enum": [
+            "xyzf",
+            "hdzf",
+            "diff",
+            "native"
+          ]
+        },
+        "timeRange": {
+          "$ref": "#/$defs/timeRange"
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "processCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "rawDatasetId",
+        "methodId",
+        "parameters",
+        "idempotencyKey"
+      ],
+      "properties": {
+        "command": {
+          "const": "process"
+        },
+        "rawDatasetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "methodId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "queryCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "datasetKind"
+      ],
+      "properties": {
+        "command": {
+          "const": "query"
+        },
+        "datasetKind": {
+          "type": "string",
+          "enum": [
+            "raw",
+            "processed"
+          ]
+        },
+        "datasetId": {
+          "type": "string"
+        },
+        "observatoryId": {
+          "type": "string"
+        },
+        "sourceRawDatasetId": {
+          "type": "string"
+        },
+        "timeRange": {
+          "$ref": "#/$defs/timeRange"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cursor": {
+          "type": "string"
+        }
+      }
+    },
+    "jobStatusCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "jobId"
+      ],
+      "properties": {
+        "command": {
+          "const": "job-status"
+        },
+        "jobId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "ok",
+        "code",
+        "message"
+      ],
+      "properties": {
+        "ok": {
+          "const": false
+        },
+        "code": {
+          "type": "string",
+          "enum": [
+            "invalid_import_request",
+            "dataset_unavailable",
+            "intermagnet_request_rejected",
+            "intermagnet_unavailable",
+            "invalid_processing_request",
+            "raw_dataset_not_found",
+            "method_not_supported",
+            "processing_input_invalid",
+            "processing_failed",
+            "invalid_query",
+            "dataset_not_found",
+            "invalid_job_transition",
+            "idempotency_conflict",
+            "storage_error"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "job": {
+      "type": "object",
+      "required": [
+        "ok",
+        "jobId",
+        "kind",
+        "status"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "import",
+            "processing"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "Created",
+            "Downloading",
+            "Processing",
+            "Completed",
+            "Failed"
+          ]
+        },
+        "datasetId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "datasetPage": {
+      "type": "object",
+      "required": [
+        "ok",
+        "items"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "nextCursor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "jobStatus": {
+      "type": "object",
+      "required": [
+        "ok",
+        "jobId",
+        "status"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "Created",
+            "Downloading",
+            "Processing",
+            "Completed",
+            "Failed"
+          ]
+        },
+        "datasetId": {
+          "type": "string"
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "details": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "request": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/importCommand"
+        },
+        {
+          "$ref": "#/$defs/processCommand"
+        },
+        {
+          "$ref": "#/$defs/queryCommand"
+        },
+        {
+          "$ref": "#/$defs/jobStatusCommand"
+        }
+      ]
+    },
+    "response": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/error"
+        },
+        {
+          "$ref": "#/$defs/job"
+        },
+        {
+          "$ref": "#/$defs/datasetPage"
+        },
+        {
+          "$ref": "#/$defs/jobStatus"
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/response"
+    }
+  ]
+}
