@@ -1,391 +1,305 @@
 openapi: 3.1.0
 info:
-  title: Local Geomagnetic Data Application API
-  version: 1.0.0
+  title: INTERMAGNET HAPI
+  version: "3.1"
   description: >-
-    Локальный API приложения на компьютере исследователя. Не является API
-    INTERMAGNET. Точный адрес локального сервера и внешний контракт INTERMAGNET
-    уточняются перед реализацией.
+    OpenAPI description of the external INTERMAGNET HAPI service used by the
+    import Tool. This is not an API exposed by the local application. Official
+    endpoint: https://imag-data.bgs.ac.uk/GIN_V1/hapi. INTERMAGNET reports that
+    this server supports HAPI 3.1.
+  contact:
+    name: INTERMAGNET Edinburgh GIN
+    email: e_ginman@bgs.ac.uk
+externalDocs:
+  description: INTERMAGNET HAPI service documentation
+  url: https://imag-data.bgs.ac.uk/GIN_V1/hapi
 servers:
-  - url: http://127.0.0.1:{port}
-    description: Локальный интерфейс приложения; порт задаётся конфигурацией приложения.
-    variables:
-      port:
-        default: "8080"
+  - url: https://imag-data.bgs.ac.uk/GIN_V1/hapi
+    description: INTERMAGNET HAPI service
 paths:
-  /imports:
-    post:
-      summary: Запустить получение сырых данных INTERMAGNET
-      description: Создаёт Job импорта; исходные данные сохраняются в локальной БД.
-      operationId: createImport
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ImportRequest'
-      responses:
-        '202':
-          description: Job создан или возвращён ранее созданный Job для того же ключа и запроса.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobAccepted'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '409':
-          description: Ключ идемпотентности уже использован с другими параметрами.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '503':
-          $ref: '#/components/responses/StorageUnavailable'
-
-  /processing:
-    post:
-      summary: Запустить обработку сырого набора
-      description: Создаёт отдельный Job и сохраняет результат отдельно от исходного набора.
-      operationId: createProcessing
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ProcessingRequest'
-      responses:
-        '202':
-          description: Job обработки создан.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JobAccepted'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '404':
-          description: Сырой набор не найден или метод обработки не поддерживается.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '409':
-          description: Ключ идемпотентности уже использован с другими параметрами.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '503':
-          $ref: '#/components/responses/StorageUnavailable'
-
-  /jobs/{jobId}:
+  /capabilities:
     get:
-      summary: Получить состояние задания
-      operationId: getJob
+      operationId: getCapabilities
+      summary: List HAPI version and supported output formats
+      responses:
+        '200':
+          description: HAPI capabilities response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capabilities'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /about:
+    get:
+      operationId: getAbout
+      summary: Get information about the HAPI server
+      responses:
+        '200':
+          description: Server identity and contact information.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/About'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /catalog:
+    get:
+      operationId: getCatalog
+      summary: List available INTERMAGNET datasets
+      responses:
+        '200':
+          description: Catalog of dataset IDs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Catalog'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /info:
+    get:
+      operationId: getDatasetInfo
+      summary: Get metadata and parameters for a dataset
       parameters:
-        - name: jobId
-          in: path
+        - name: dataset
+          in: query
           required: true
+          description: Dataset ID returned by `/catalog`.
+          schema:
+            $ref: '#/components/schemas/DatasetId'
+        - name: parameters
+          in: query
+          required: false
+          description: Comma-separated subset of dataset parameters, in catalog order.
           schema:
             type: string
       responses:
         '200':
-          description: Состояние Job и ссылка на созданный набор, если он готов.
+          description: Dataset metadata.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Job'
+                $ref: '#/components/schemas/DatasetInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
-        '503':
-          $ref: '#/components/responses/StorageUnavailable'
+        '500':
+          $ref: '#/components/responses/ServerError'
 
-  /datasets:
+  /data:
     get:
-      summary: Найти сохранённые наборы
-      description: Читает локальную БД и не обращается к INTERMAGNET.
-      operationId: listDatasets
+      operationId: getData
+      summary: Stream measurements for a dataset and time interval
       parameters:
-        - name: kind
+        - name: dataset
           in: query
           required: true
+          description: Dataset ID returned by `/catalog`.
           schema:
-            type: string
-            enum: [raw, processed]
-        - name: observatoryId
-          in: query
-          required: false
-          schema:
-            type: string
-        - name: sourceRawDatasetId
-          in: query
-          required: false
-          description: Фильтр обработанных результатов по исходному набору.
-          schema:
-            type: string
+            $ref: '#/components/schemas/DatasetId'
         - name: start
           in: query
-          required: false
+          required: true
+          description: Inclusive start time in HAPI restricted ISO 8601 format.
           schema:
             type: string
             format: date-time
-        - name: end
+            example: "2025-01-01T00:00:00Z"
+        - name: stop
           in: query
-          required: false
+          required: true
+          description: Exclusive stop time in HAPI restricted ISO 8601 format.
           schema:
             type: string
             format: date-time
-        - name: limit
+            example: "2025-01-02T00:00:00Z"
+        - name: parameters
           in: query
           required: false
-          schema:
-            type: integer
-            minimum: 1
-            default: 50
-        - name: cursor
-          in: query
-          required: false
+          description: Comma-separated dataset parameter names; omit to request all parameters.
           schema:
             type: string
+        - name: format
+          in: query
+          required: false
+          description: INTERMAGNET currently advertises csv, json and binary.
+          schema:
+            type: string
+            enum: [csv, json, binary]
+            default: csv
+        - name: include
+          in: query
+          required: false
+          description: Include HAPI metadata header with the data stream when supported.
+          schema:
+            type: string
+            enum: [header]
       responses:
         '200':
-          description: Страница локально сохранённых наборов.
+          description: >-
+            Data stream in the requested format. A successful request with no
+            records for the interval is still HTTP 200; the HAPI status is
+            1201 (preferred) or 1200 with an empty stream.
           content:
+            text/csv:
+              schema:
+                type: string
             application/json:
               schema:
-                $ref: '#/components/schemas/DatasetPage'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '503':
-          $ref: '#/components/responses/StorageUnavailable'
-
-  /datasets/{datasetId}:
-    get:
-      summary: Получить метаданные набора
-      operationId: getDataset
-      parameters:
-        - name: datasetId
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Метаданные и происхождение набора.
-          content:
-            application/json:
+                type: object
+                description: HAPI JSON data stream; fields follow dataset metadata.
+                additionalProperties: true
+            application/octet-stream:
               schema:
-                $ref: '#/components/schemas/Dataset'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '503':
-          $ref: '#/components/responses/StorageUnavailable'
-
-  /datasets/{datasetId}/records:
-    get:
-      summary: Прочитать содержимое набора
-      description: Возвращает локально сохранённые записи; сырая форма ответа источника сохраняется без научной обработки.
-      operationId: getDatasetRecords
-      parameters:
-        - name: datasetId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            default: 500
-        - name: cursor
-          in: query
-          required: false
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Страница сохранённых записей.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RecordPage'
+                type: string
+                format: binary
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
-        '503':
-          $ref: '#/components/responses/StorageUnavailable'
+        '500':
+          $ref: '#/components/responses/ServerError'
 
 components:
-  parameters:
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      description: Повтор с тем же ключом и телом возвращает прежний Job; другое тело даёт конфликт.
-      schema:
-        type: string
-        minLength: 1
-  responses:
-    BadRequest:
-      description: Неверные параметры запроса.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    NotFound:
-      description: Job или набор не найден.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-    StorageUnavailable:
-      description: Локальная БД недоступна или не выполнила операцию.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
   schemas:
-    ImportRequest:
-      type: object
-      additionalProperties: false
-      required: [observatoryId, timeRange, components]
-      properties:
-        observatoryId:
-          type: string
-        timeRange:
-          $ref: '#/components/schemas/TimeRange'
-        components:
-          type: array
-          minItems: 1
-          items:
-            type: string
-    ProcessingRequest:
-      type: object
-      additionalProperties: false
-      required: [rawDatasetId, methodId]
-      properties:
-        rawDatasetId:
-          type: string
-        methodId:
-          type: string
-        parameters:
-          type: object
-          additionalProperties: true
-          default: {}
-    TimeRange:
-      type: object
-      additionalProperties: false
-      required: [start, end]
-      properties:
-        start:
-          type: string
-          format: date-time
-        end:
-          type: string
-          format: date-time
-      description: start должен быть раньше end; часовой пояс обязателен.
-    JobAccepted:
-      type: object
-      required: [jobId, status, statusUrl]
-      properties:
-        jobId:
-          type: string
-        status:
-          type: string
-          enum: [Created]
-        statusUrl:
-          type: string
-          format: uri-reference
-    Job:
-      type: object
-      required: [jobId, kind, status, createdAt]
-      properties:
-        jobId:
-          type: string
-        kind:
-          type: string
-          enum: [import, processing]
-        status:
-          type: string
-          enum: [Created, Downloading, Processing, Completed, Failed]
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-        datasetId:
-          type: string
-          description: Заполняется после успешного сохранения результата.
-        error:
-          $ref: '#/components/schemas/Error'
-    DatasetPage:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Dataset'
-        nextCursor:
-          type: string
-    Dataset:
-      type: object
-      required: [datasetId, kind, recordCount, createdAt, provenance]
-      properties:
-        datasetId:
-          type: string
-        kind:
-          type: string
-          enum: [raw, processed]
-        observatoryId:
-          type: string
-        sourceRawDatasetId:
-          type: string
-        timeRange:
-          $ref: '#/components/schemas/TimeRange'
-        methodId:
-          type: string
-        parameters:
-          type: object
-          additionalProperties: true
-        recordCount:
-          type: integer
-          minimum: 0
-        createdAt:
-          type: string
-          format: date-time
-        provenance:
-          type: object
-          additionalProperties: true
-    RecordPage:
-      type: object
-      required: [items]
-      properties:
-        items:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-            description: Запись в форме, определённой подтверждённым форматом выбранного набора.
-        nextCursor:
-          type: string
-    Error:
+    HapiStatus:
       type: object
       required: [code, message]
       properties:
         code:
-          type: string
+          type: integer
+          description: Standard HAPI status code. A server may also use a documented extension code.
+          examples: [1200, 1201, 1406, 1500]
         message:
           type: string
-        details:
-          type: object
-          additionalProperties: true
-        correlationId:
+    Capabilities:
+      type: object
+      required: [HAPI, status, outputFormats]
+      properties:
+        HAPI:
           type: string
+          example: "3.1"
+        status:
+          $ref: '#/components/schemas/HapiStatus'
+        outputFormats:
+          type: array
+          items:
+            type: string
+            enum: [csv, json, binary]
+          example: [csv, json, binary]
+    About:
+      type: object
+      required: [HAPI, status, id, title, contact]
+      properties:
+        HAPI:
+          type: string
+        status:
+          $ref: '#/components/schemas/HapiStatus'
+        id:
+          type: string
+        title:
+          type: string
+        contact:
+          type: string
+        description:
+          type: string
+      additionalProperties: true
+    Catalog:
+      type: object
+      required: [HAPI, status, catalog]
+      properties:
+        HAPI:
+          type: string
+        status:
+          $ref: '#/components/schemas/HapiStatus'
+        catalog:
+          type: array
+          items:
+            type: object
+            required: [id]
+            properties:
+              id:
+                $ref: '#/components/schemas/DatasetId'
+              title:
+                type: string
+      additionalProperties: true
+    DatasetId:
+      type: string
+      description: >-
+        INTERMAGNET HAPI ID consists of IAGA observatory code, publication
+        state, cadence and component orientation separated by slashes.
+      pattern: '^[A-Za-z]{3}/(adjusted|definitive|quasi-def|reported|best-avail)/(PT1M|PT1S)/(xyzf|hdzf|diff|native)$'
+      example: abk/definitive/PT1M/xyzf
+    DatasetInfo:
+      type: object
+      required: [HAPI, status, parameters, startDate, stopDate]
+      properties:
+        HAPI:
+          type: string
+        status:
+          $ref: '#/components/schemas/HapiStatus'
+        parameters:
+          type: array
+          items:
+            $ref: '#/components/schemas/Parameter'
+        startDate:
+          type: string
+        stopDate:
+          type: string
+        cadence:
+          type: string
+        description:
+          type: string
+        provenance:
+          type: string
+      additionalProperties: true
+    Parameter:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [isotime, string, integer, double]
+        units:
+          type: string
+        fill:
+          oneOf:
+            - type: string
+            - type: number
+        description:
+          type: string
+      additionalProperties: true
+    HapiError:
+      type: object
+      required: [HAPI, status]
+      properties:
+        HAPI:
+          type: string
+        status:
+          $ref: '#/components/schemas/HapiStatus'
+      additionalProperties: true
+  responses:
+    BadRequest:
+      description: HAPI input error; HAPI status code is normally 1400-series.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HapiError'
+    NotFound:
+      description: Dataset or parameter is unknown; HAPI status code is normally 1406 or 1407.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HapiError'
+    ServerError:
+      description: INTERMAGNET HAPI internal or upstream error; HAPI status code is normally 1500-series.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HapiError'
