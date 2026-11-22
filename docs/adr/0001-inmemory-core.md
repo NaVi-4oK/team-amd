@@ -11,7 +11,7 @@
 
 Описать систему как одно локальное приложение с CLI, сервисом заданий, реестром трёх Tool и локальным хранилищем. CLI вызывает сервис заданий внутри процесса. Только `INTERMAGNET Import Tool` имеет внешнее сетевое взаимодействие. Локальная БД хранит Job, сырые данные, обработанные результаты и происхождение.
 
-`docs/api/openapi.yaml` описывает внешний HAPI API INTERMAGNET, который использует Import Tool. Команды CLI описаны в `docs/api/cli.schema.json`, ответы CLI — в `docs/api/cli-response.schema.json`.
+Внешние вызовы HAPI INTERMAGNET, которые использует Import Tool, описаны в `docs/tool-contract.md`. Единая `docs/api/cli.schema.json` описывает команды и ответы CLI.
 
 ## Последствия
 
