@@ -1,16 +1,23 @@
 openapi: 3.1.0
 info:
-  title: Локальный API агрегатора геомагнитных данных
-  version: 0.2.0
+  title: Local Geomagnetic Data Application API
+  version: 1.0.0
   description: >-
-    Контракт взаимодействия интерфейса с локальной программой. Он не описывает
-    публичный сетевой сервис. Внешний API поставщика сырых данных будет
-    определён после выбора источника.
+    Локальный API приложения на компьютере исследователя. Не является API
+    INTERMAGNET. Точный адрес локального сервера и внешний контракт INTERMAGNET
+    уточняются перед реализацией.
+servers:
+  - url: http://127.0.0.1:{port}
+    description: Локальный интерфейс приложения; порт задаётся конфигурацией приложения.
+    variables:
+      port:
+        default: "8080"
 paths:
   /imports:
     post:
+      summary: Запустить получение сырых данных INTERMAGNET
+      description: Создаёт Job импорта; исходные данные сохраняются в локальной БД.
       operationId: createImport
-      summary: Создать задание на загрузку сырых данных
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -21,29 +28,27 @@ paths:
               $ref: '#/components/schemas/ImportRequest'
       responses:
         '202':
-          description: Локальное задание на импорт создано или найдено по ключу идемпотентности
+          description: Job создан или возвращён ранее созданный Job для того же ключа и запроса.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Job'
+                $ref: '#/components/schemas/JobAccepted'
         '400':
-          description: Неверные параметры импорта
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/BadRequest'
         '409':
-          description: Ключ идемпотентности уже использован с другими параметрами
+          description: Ключ идемпотентности уже использован с другими параметрами.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Error'
         '503':
           $ref: '#/components/responses/StorageUnavailable'
+
   /processing:
     post:
+      summary: Запустить обработку сырого набора
+      description: Создаёт отдельный Job и сохраняет результат отдельно от исходного набора.
       operationId: createProcessing
-      summary: Создать задание на обработку сохранённого сырого набора
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -54,311 +59,326 @@ paths:
               $ref: '#/components/schemas/ProcessingRequest'
       responses:
         '202':
-          description: Локальное задание на обработку создано или найдено по ключу идемпотентности
+          description: Job обработки создан.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Job'
+                $ref: '#/components/schemas/JobAccepted'
         '400':
-          description: Неверные параметры обработки
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/BadRequest'
         '404':
-          description: Сырой набор не найден в локальной базе
+          description: Сырой набор не найден или метод обработки не поддерживается.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Error'
         '409':
-          description: Ключ идемпотентности уже использован с другими параметрами
+          description: Ключ идемпотентности уже использован с другими параметрами.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiError'
+                $ref: '#/components/schemas/Error'
         '503':
           $ref: '#/components/responses/StorageUnavailable'
-  /jobs/{job_id}:
+
+  /jobs/{jobId}:
     get:
+      summary: Получить состояние задания
       operationId: getJob
-      summary: Получить состояние локального задания
       parameters:
-        - name: job_id
+        - name: jobId
           in: path
           required: true
           schema:
             type: string
       responses:
         '200':
-          description: Состояние и результат задания, если набор уже сохранён
+          description: Состояние Job и ссылка на созданный набор, если он готов.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
         '404':
-          description: Задание не найдено в локальной базе
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/StorageUnavailable'
+
   /datasets:
     get:
+      summary: Найти сохранённые наборы
+      description: Читает локальную БД и не обращается к INTERMAGNET.
       operationId: listDatasets
-      summary: Найти наборы в локальной базе
       parameters:
         - name: kind
           in: query
+          required: true
           schema:
             type: string
             enum: [raw, processed]
-        - name: observatory_id
+        - name: observatoryId
           in: query
+          required: false
           schema:
             type: string
-        - name: limit
+        - name: sourceRawDatasetId
           in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 500
-            default: 100
-        - name: offset
-          in: query
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
-      responses:
-        '200':
-          description: Страница найденных локальных наборов
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DatasetList'
-        '400':
-          description: Неверный фильтр или параметры страницы
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '503':
-          $ref: '#/components/responses/StorageUnavailable'
-  /datasets/{dataset_id}:
-    get:
-      operationId: getDataset
-      summary: Получить метаданные набора из локальной базы
-      parameters:
-        - name: dataset_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Метаданные сырого или обработанного набора
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Dataset'
-        '404':
-          description: Набор не найден в локальной базе
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '503':
-          $ref: '#/components/responses/StorageUnavailable'
-  /datasets/{dataset_id}/records:
-    get:
-      operationId: queryDatasetRecords
-      summary: Прочитать записи набора из локальной базы
-      parameters:
-        - name: dataset_id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: observatory_id
-          in: query
-          schema:
-            type: string
-        - name: component
-          in: query
+          required: false
+          description: Фильтр обработанных результатов по исходному набору.
           schema:
             type: string
         - name: start
           in: query
+          required: false
           schema:
             type: string
             format: date-time
         - name: end
           in: query
+          required: false
           schema:
             type: string
             format: date-time
         - name: limit
           in: query
+          required: false
           schema:
             type: integer
             minimum: 1
-            maximum: 1000
-            default: 100
-        - name: offset
+            default: 50
+        - name: cursor
           in: query
+          required: false
           schema:
-            type: integer
-            minimum: 0
-            default: 0
+            type: string
       responses:
         '200':
-          description: Страница записей указанного набора
+          description: Страница локально сохранённых наборов.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
+
+  /datasets/{datasetId}:
+    get:
+      summary: Получить метаданные набора
+      operationId: getDataset
+      parameters:
+        - name: datasetId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Метаданные и происхождение набора.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dataset'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
+
+  /datasets/{datasetId}/records:
+    get:
+      summary: Прочитать содержимое набора
+      description: Возвращает локально сохранённые записи; сырая форма ответа источника сохраняется без научной обработки.
+      operationId: getDatasetRecords
+      parameters:
+        - name: datasetId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 500
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Страница сохранённых записей.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/RecordPage'
         '400':
-          description: Неверный период, фильтр или параметры страницы
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/BadRequest'
         '404':
-          description: Набор не найден в локальной базе
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+          $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/StorageUnavailable'
+
 components:
-  responses:
-    StorageUnavailable:
-      description: Локальная база временно недоступна
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ApiError'
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: true
-      description: Повтор с тем же ключом и параметрами возвращает прежний Job.
+      description: Повтор с тем же ключом и телом возвращает прежний Job; другое тело даёт конфликт.
       schema:
         type: string
         minLength: 1
+  responses:
+    BadRequest:
+      description: Неверные параметры запроса.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Job или набор не найден.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    StorageUnavailable:
+      description: Локальная БД недоступна или не выполнила операцию.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   schemas:
     ImportRequest:
       type: object
-      required: [observatory_ids, components, start, end]
+      additionalProperties: false
+      required: [observatoryId, timeRange, components]
       properties:
-        observatory_ids:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            type: string
-            minLength: 1
+        observatoryId:
+          type: string
+        timeRange:
+          $ref: '#/components/schemas/TimeRange'
         components:
           type: array
           minItems: 1
           items:
             type: string
-            minLength: 1
+    ProcessingRequest:
+      type: object
+      additionalProperties: false
+      required: [rawDatasetId, methodId]
+      properties:
+        rawDatasetId:
+          type: string
+        methodId:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+          default: {}
+    TimeRange:
+      type: object
+      additionalProperties: false
+      required: [start, end]
+      properties:
         start:
           type: string
           format: date-time
         end:
           type: string
           format: date-time
-    ProcessingRequest:
+      description: start должен быть раньше end; часовой пояс обязателен.
+    JobAccepted:
       type: object
-      required: [raw_dataset_id, method_id]
+      required: [jobId, status, statusUrl]
       properties:
-        raw_dataset_id:
+        jobId:
           type: string
-          minLength: 1
-        method_id:
+        status:
           type: string
-          minLength: 1
-        parameters:
-          type: object
-          additionalProperties: true
-          default: {}
+          enum: [Created]
+        statusUrl:
+          type: string
+          format: uri-reference
     Job:
       type: object
-      required: [id, operation, state]
+      required: [jobId, kind, status, createdAt]
       properties:
-        id:
-          type: string
-        operation:
-          type: string
-          enum: [import, processing]
-        state:
-          type: string
-          enum: [Created, Downloading, Processing, Completed, Failed]
-        dataset_id:
-          type: [string, 'null']
-        error:
-          oneOf:
-            - $ref: '#/components/schemas/ApiError'
-            - type: 'null'
-    Dataset:
-      type: object
-      required: [id, kind, created_at, metadata]
-      properties:
-        id:
+        jobId:
           type: string
         kind:
           type: string
-          enum: [raw, processed]
-        created_at:
+          enum: [import, processing]
+        status:
+          type: string
+          enum: [Created, Downloading, Processing, Completed, Failed]
+        createdAt:
           type: string
           format: date-time
-        metadata:
-          type: object
-          description: Для processed-набора содержит ссылку на исходный набор и метод обработки.
-          additionalProperties: true
-    DatasetList:
+        updatedAt:
+          type: string
+          format: date-time
+        datasetId:
+          type: string
+          description: Заполняется после успешного сохранения результата.
+        error:
+          $ref: '#/components/schemas/Error'
+    DatasetPage:
       type: object
-      required: [items, offset, limit]
+      required: [items]
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/Dataset'
-        offset:
-          type: integer
-        limit:
-          type: integer
-        total:
-          type: [integer, 'null']
-    RecordPage:
+        nextCursor:
+          type: string
+    Dataset:
       type: object
-      required: [dataset_id, kind, records, offset, limit]
+      required: [datasetId, kind, recordCount, createdAt, provenance]
       properties:
-        dataset_id:
+        datasetId:
           type: string
         kind:
           type: string
           enum: [raw, processed]
-        records:
+        observatoryId:
+          type: string
+        sourceRawDatasetId:
+          type: string
+        timeRange:
+          $ref: '#/components/schemas/TimeRange'
+        methodId:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+        recordCount:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        provenance:
+          type: object
+          additionalProperties: true
+    RecordPage:
+      type: object
+      required: [items]
+      properties:
+        items:
           type: array
           items:
             type: object
             additionalProperties: true
-        offset:
-          type: integer
-        limit:
-          type: integer
-        total:
-          type: [integer, 'null']
-    ApiError:
+            description: Запись в форме, определённой подтверждённым форматом выбранного набора.
+        nextCursor:
+          type: string
+    Error:
       type: object
-      required: [code, message, details, correlation_id]
+      required: [code, message]
       properties:
         code:
           type: string
@@ -366,11 +386,6 @@ components:
           type: string
         details:
           type: object
-          properties:
-            field:
-              type: string
-            reason:
-              type: string
           additionalProperties: true
-        correlation_id:
+        correlationId:
           type: string
