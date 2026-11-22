@@ -31,7 +31,7 @@ flowchart LR
 flowchart LR
     ui[Интерфейс программы] -->|1| app[Локальный сервис и Dispatcher]
     app -->|2| import[ObservatoryApiTool]
-    import -->|3| external[Единый внешний API]
+    import -->|3| external[Внешний API]
     external -->|4| import
     import -->|5| app
     app -->|6| db[Локальная база данных]
