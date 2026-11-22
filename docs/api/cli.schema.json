@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "cli.schema.json",
   "title": "Контракт локального CLI",
-  "description": "Одна JSON-схема для команд, подаваемых в CLI через stdin или файл, и JSON-ответов CLI. Это не HTTP API.",
+  "description": "Одна JSON-схема для команд, подаваемых в CLI через stdin или файл, и JSON-ответов CLI.",
   "$defs": {
     "timeRange": {
       "type": "object",
