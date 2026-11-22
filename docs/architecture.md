@@ -66,7 +66,7 @@ flowchart TD
 
 Добавление нового источника требует реализации Tool и регистрации его в Registry; Dispatcher продолжает работать с общим контрактом. Подробные поля `FetchRequest`, `ToolResult` и `ToolError` заданы в [контракте Tool](tool-contract.md), а HTTP-запросы — в [OpenAPI](api/openapi.yaml).
 
-## Состояния Job
+## Диаграмма состояний Job
 
 ```mermaid
 stateDiagram-v2
