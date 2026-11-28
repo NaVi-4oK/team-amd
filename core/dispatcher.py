@@ -1,13 +1,10 @@
-
 from copy import deepcopy
 from typing import Any, Dict, Optional, Union
-
 from core.contracts import Tool, ToolResult
 from core.errors import DomainError
 from core.job import Job, JobState
 from core.registry import Registry
 from core.repository import JobRepository
-
 
 class Dispatcher:
 
@@ -39,9 +36,20 @@ class Dispatcher:
 
         parameters = deepcopy(parameters)
 
+        # Проверка повторного запроса до валидации Tool.
+        if tool.job_kind is not None:
+            existing = self._repository.find_existing(
+                operation,
+                idempotency_key,
+                parameters,
+            )
+
+            if existing is not None:
+                return existing
+
         tool.validate(parameters)
 
-        # Synchronous operation without Job
+        # Синхронная операция без создания Job.
         if tool.job_kind is None:
             try:
                 result = tool.execute(parameters)
@@ -63,7 +71,9 @@ class Dispatcher:
                     "Tool execution failed",
                 ) from None
 
-        # Operation with Job
+        # Операция с созданием Job.
+        # Повторная атомарная проверка ключа защищает
+        # от одновременного создания одинаковых заданий.
         job, created = self._repository.get_or_create(
             operation=operation,
             idempotency_key=idempotency_key,
@@ -136,10 +146,27 @@ class Dispatcher:
         return self._repository.get(job_id)
 
     def recover_interrupted_jobs(self) -> int:
+        """
+        Восстановление незавершённых заданий.
+
+        Вызывается при запуске приложения,
+        до начала выполнения новых заданий.
+        """
+
         recovered = 0
 
         for job in self._repository.all():
-            if job.state in {
+
+            if job.state == JobState.CREATED:
+                job.fail(
+                    DomainError(
+                        "job_interrupted",
+                        "Job was interrupted before execution",
+                    )
+                )
+                recovered += 1
+
+            elif job.state in {
                 JobState.DOWNLOADING,
                 JobState.PROCESSING,
             }:

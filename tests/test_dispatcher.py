@@ -1,7 +1,7 @@
-
 import unittest
 
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch
 from core.contracts import Tool, ToolResult
 from core.dispatcher import Dispatcher
 from core.errors import DomainError
@@ -256,6 +256,121 @@ class TestDispatcher(unittest.TestCase):
 
         self.assertEqual(job.state, JobState.COMPLETED)
         self.assertEqual(tool.calls, 1)
+
+    def test_idempotency_conflict_before_validation(self):
+        tool = FakeTool()
+        self.registry.register("import", tool)
+
+        first = self.dispatcher.dispatch(
+            "import",
+            {"value": "test"},
+            "key-001",
+        )
+
+        with self.assertRaises(DomainError) as error:
+            self.dispatcher.dispatch(
+                "import",
+                {"value": ""},
+                "key-001",
+            )
+
+        self.assertEqual(
+            error.exception.code,
+            "idempotency_conflict",
+        )
+        self.assertEqual(
+            first.state, JobState.COMPLETED
+        )
+        self.assertEqual(tool.calls, 1)
+
+    def test_replay_does_not_validate_again(self):
+        tool = FakeTool()
+        self.registry.register("import", tool)
+
+        first = self.dispatcher.dispatch(
+            "import",
+            {"value": "test"},
+            "key-001",
+        )
+
+        with patch.object(
+            tool,
+            "validate",
+            side_effect=RuntimeError(
+                "Validation must not run again"
+            ),
+        ) as validate:
+            second = self.dispatcher.dispatch(
+                "import",
+                {"value": "test"},
+                "key-001",
+            )
+
+            validate.assert_not_called()
+
+        self.assertIs(first, second)
+        self.assertEqual(tool.calls, 1)
+
+    def test_non_json_parameters_are_rejected(self):
+        tool = FakeTool()
+        self.registry.register("import", tool)
+
+        with self.assertRaises(DomainError) as error:
+            self.dispatcher.dispatch(
+                "import",
+                {"value": float("nan")},
+                "key-001",
+            )
+
+        self.assertEqual(
+            error.exception.code,
+            "invalid_parameters",
+        )
+        self.assertEqual(
+            error.exception.details["field"],
+            "parameters",
+        )
+        self.assertEqual(tool.calls, 0)
+        self.assertEqual(self.repository.all(), [])
+
+    def test_recover_created_job(self):
+        tool = FakeTool()
+        self.registry.register("import", tool)
+
+        job, _ = self.repository.get_or_create(
+            operation="import",
+            idempotency_key="key-001",
+            parameters={"value": "test"},
+            kind=JobKind.IMPORT,
+        )
+
+        self.assertEqual(
+            job.state, JobState.CREATED
+        )
+
+        self.assertEqual(
+            self.dispatcher.recover_interrupted_jobs(),
+            1,
+        )
+
+        self.assertEqual(job.state, JobState.FAILED)
+        self.assertEqual(
+            job.error.code,
+            "job_interrupted",
+        )
+
+        repeated = self.dispatcher.dispatch(
+            "import",
+            {"value": "test"},
+            "key-001",
+        )
+
+        self.assertIs(job, repeated)
+        self.assertEqual(tool.calls, 0)
+        self.assertEqual(
+            self.dispatcher.recover_interrupted_jobs(),
+            0,
+        )
 
 
 if __name__ == "__main__":
