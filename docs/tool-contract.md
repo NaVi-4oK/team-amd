@@ -1,144 +1,339 @@
 # Контракт Tool
 
-Tool — внутренняя операция локальной программы. CLI передаёт команду сервису заданий, тот проверяет её, вызывает нужный Tool и сохраняет состояние Job. HTTP API программы нет. Команды и ответы CLI описаны в `docs/api/cli.schema.json`; внешний HAPI-контракт, используемый Import Tool, приведён ниже.
+Tool — внутренняя операция локальной программы.
+Вызывающая сторона передаёт запрос Dispatcher,
+который находит Tool в Registry, проверяет параметры
+и управляет состоянием Job.
+
+Собственный HTTP API программы не предусмотрен.
+Целевой контракт CLI описан в `api/cli.schema.json`.
+
+## Общий программный контракт
+
+Реализован в `core/contracts.py`.
+
+```python
+class Tool:
+    job_kind = None
+
+    def validate(self, parameters):
+        ...
+
+    def execute(self, parameters, job_id=None):
+        ...
+```
+
+Метод `validate()` проверяет параметры операции.
+Метод `execute()` выполняет операцию и возвращает
+экземпляр ToolResult.
+
+```text
+ToolResult {
+    data: object
+    dataset_id: string?
+}
+```
+
+Для операций с Job поле dataset_id содержит
+идентификатор сохранённого результата.
+
+Для синхронного чтения отдельный Job не требуется.
+
+В текущей реализации Dispatcher возвращает Job
+для импорта и обработки, а ToolResult — для чтения.
+Дополнительные сведения о сохранённом наборе можно
+получить через Query Tool.
 
 ## Общие правила
 
-- Tool не меняет Job напрямую; состояние меняет сервис заданий после результата Tool.
-- `raw_dataset` означает набор, который программа сохранила из INTERMAGNET до запуска собственного Processing Tool. Источник может отдавать разные publication states (`reported`, `adjusted`, `quasi-def`, `definitive`, `best-avail`); эти состояния и cadence записываются как происхождение данных.
-- Внешний HAPI status `1200` означает успех. `1201` означает успешный ответ без данных за период. HTTP 4xx / HAPI 14xx означают ошибку запроса или набора; HTTP 5xx / HAPI 15xx — ошибку сервера или upstream.
-- Ошибка Tool имеет вид `ToolError { code, message, details? }`. Сообщение безопасно для показа пользователю и не включает секреты или неограниченный сырой ответ.
-- CLI-команды импорта и обработки требуют ключ идемпотентности. Повтор с тем же ключом и теми же параметрами возвращает тот же Job; с другими параметрами — `idempotency_conflict`.
-- Набор и состояние `Completed` фиксируются согласованно. Нельзя показывать частично записанный набор как готовый.
+- Tool не изменяет Job напрямую.
+- Допустимые переходы проверяются внутри Job.
+- Состояние Job изменяет Dispatcher.
+- Сырой набор — набор до выполнения собственного
+  Processing Tool, независимо от publication state
+  источника INTERMAGNET.
+- Ошибка Tool представлена DomainError.
+
+```text
+ToolError {
+    code: string
+    message: string
+    details: object?
+}
+```
+
+- Сообщения ошибок предназначены для пользователя
+  и не включают секреты или необработанные исключения.
+- Импорт и обработка требуют ключ идемпотентности.
+- Одинаковый ключ и параметры возвращают прежний Job.
+- Тот же ключ с другими параметрами или операцией
+  возвращает idempotency_conflict.
+- Проверка существующего запроса выполняется
+  до повторной валидации Tool.
+- Новый Job создаётся только после проверки параметров.
+- Набор публикуется только после успешного завершения
+  соответствующего Job.
 
 ## Внешний контракт INTERMAGNET HAPI
 
-Import Tool обращается к `https://imag-data.bgs.ac.uk/GIN_V1/hapi`. Это внешний HTTP API; локальная программа не предоставляет этот интерфейс сама. INTERMAGNET сообщает о поддержке HAPI 3.1.
+Целевой внешний endpoint:
 
-| HAPI endpoint | Метод | Назначение и параметры |
+https://imag-data.bgs.ac.uk/GIN_V1/hapi
+
+В практике 2 зафиксирован HAPI версии 3.1.
+
+| Endpoint | Метод | Назначение |
 |---|---|---|
-| `/capabilities` | GET | Получить версию HAPI и список форматов данных, поддерживаемых сервером |
-| `/catalog` | GET | Получить список dataset ID и названий доступных наборов |
-| `/info` | GET | Получить метаданные и параметры выбранного набора; обязателен `dataset`, допустим `parameters` |
-| `/data` | GET | Получить измерения; обязательны `dataset`, `start`, `stop`; допустимы `parameters`, `format` |
+| `/capabilities` | GET | Версия HAPI и доступные форматы |
+| `/catalog` | GET | Доступные dataset ID |
+| `/info` | GET | Метаданные выбранного dataset |
+| `/data` | GET | Получение измерений за период |
 
-Dataset ID имеет составной вид `IAGACode/DataType/Cadence/Components`: код обсерватории, publication state, cadence и система компонент. HAPI INTERMAGNET предлагает cadence `PT1M` и `PT1S`, а компоненты `xyzf`, `hdzf`, `diff` и `native`. Доступные publication state и dataset ID следует брать из актуального каталога, не составлять вручную без проверки.
+Для `/info` обязателен параметр dataset,
+дополнительно допускается parameters.
 
-Вызовы выполняются GET-запросами. Временной интервал у `data` полуоткрытый: `start` включён, `stop` не включён. Ответ может запрашиваться в формате `csv`, `json` или `binary`, если формат перечислен в ответе `capabilities`. Программа сохраняет выбранный dataset ID, параметры, метаданные `info`, статус HAPI и исходное тело `data`.
+Для `/data` обязательны dataset, start, stop,
+дополнительно допускаются parameters и format.
 
-| HTTP / HAPI status | Значение для Import Tool |
+Dataset ID имеет вид:
+
+```text
+IAGACode/DataType/Cadence/Components
+```
+
+Входные значения:
+
+- publication state: adjusted, definitive,
+  quasi-def, reported, best-avail;
+- cadence: PT1M, PT1S;
+- components: xyzf, hdzf, diff, native.
+
+Доступность конкретного набора должна подтверждаться
+актуальным каталогом, а не только составлением ID.
+
+Интервал полуоткрытый: начало включается,
+окончание не включается.
+
+Формат ответа выбирается из поддерживаемых форматов,
+объявленных через capabilities.
+
+| HTTP / HAPI status | Поведение |
 |---|---|
-| `200` / `1200` | Запрос успешен, данные могут быть непустыми |
-| `200` / `1201` | Запрос успешен, данных за период нет; создать пустой сырой набор и завершить Job как `Completed` |
-| `400` / `1400–1405`, `1408–1413` | Ошибка параметров/диапазона/формата; сопоставить с `intermagnet_request_rejected` |
-| `404` / `1406–1407` | Неизвестный dataset или параметр; сопоставить с `dataset_unavailable` |
-| `500` / `1500–1501` | Ошибка сервера или upstream; сопоставить с `intermagnet_unavailable` |
+| 200 / 1200 | Успешное получение данных |
+| 200 / 1201 | Успешное получение пустого набора |
+| 400 / 1400–1405, 1408–1413 | intermagnet_request_rejected |
+| 404 / 1406–1407 | dataset_unavailable |
+| 500 / 1500–1501 | intermagnet_unavailable |
 
-Источник описания: [INTERMAGNET HAPI](https://imag-data.bgs.ac.uk/GIN_V1/hapi) и [описание INTERMAGNET Web Services](https://imag-data.bgs.ac.uk/GIN_V1/). Конкретный набор и допустимый формат нужно подтвердить по актуальным ответам сервиса перед реализацией.
+Источники описания:
+
+- https://imag-data.bgs.ac.uk/GIN_V1/hapi
+- https://imag-data.bgs.ac.uk/GIN_V1/
+
+В практике 3 настоящий HTTP-адаптер отсутствует.
+Import Tool работает через интерфейс IntermagnetSource
+и тестовые ответы HapiResponse.
+
+```text
+HapiResponse {
+    dataset_id: string
+    status: integer
+    metadata: object
+    body: string
+}
+```
+
+Текущая реализация обрабатывает JSON-тело ответа.
+
+Проверка доступности dataset через каталог, поддерживаемых
+форматов через capabilities, сетевых тайм-аутов
+и полноты внешних метаданных относится к дальнейшей
+реализации адаптера.
 
 ## Tool 1 — INTERMAGNET Import Tool
 
-Назначение: найти подходящий dataset в INTERMAGNET HAPI, запросить ряд и сохранить ответ источника локально. Tool не выполняет выбранную пользователем последующую научную обработку.
+Имя операции в Registry: `import`.
+
+Тип Job: IMPORT.
+
+### Назначение
+
+Получить геомагнитные измерения через адаптер
+INTERMAGNET и сохранить сырой набор без научной обработки.
 
 ### Вход
 
 ```text
 ImportRequest {
-  observatory_id: string       // трёхбуквенный IAGA code
-  publication_state: string    // adjusted | definitive | quasi-def | reported | best-avail
-  cadence: string              // PT1M | PT1S
-  components: string           // xyzf | hdzf | diff | native
-  start: datetime
-  stop: datetime
-  idempotency_key: string
+    observatory_id: string
+    publication_state: string
+    cadence: string
+    components: string
+    start: datetime
+    stop: datetime
+    idempotency_key: string
 }
 ```
 
-Входные значения используются для выбора `dataset` из HAPI catalog. Затем Tool вызывает `info` и `data` по внешнему контракту выше. Время начала включается в запрос, время окончания не включается. Выходной формат при передаче сырого ответа — один из форматов, которые INTERMAGNET сообщает через `capabilities`.
+В программном интерфейсе Dispatcher ключ
+idempotency_key передаётся отдельным аргументом.
 
-### Результат
+Временной интервал должен быть корректным,
+start должен предшествовать stop.
+
+Код обсерватории состоит из трёх заглавных
+латинских букв.
+
+Дата и время должны содержать часовой пояс.
+
+### Результат Tool
 
 ```text
 ImportResult {
-  job_id: string
-  raw_dataset_id: string
-  intermagnet_dataset_id: string
-  record_count: integer
-  retrieved_at: datetime
-  source_metadata: object
+    job_id: string
+    raw_dataset_id: string
+    intermagnet_dataset_id: string
+    record_count: integer
+    retrieved_at: datetime
+    source_metadata: object
 }
 ```
 
-`source_metadata` сохраняет HAPI dataset ID, publication state, cadence, components, период запроса, описание параметров и HAPI status. Исходное тело ответа сохраняется так, чтобы его можно было прочитать и повторно передать Processing Tool. Набор с нулём записей при HAPI `1201` считается успешным импортом и завершается `Completed`.
+Сохраняются исходное JSON-тело ответа, разобранные записи,
+метаданные источника, временной период, cadence,
+publication state, components и HAPI status.
+
+HAPI 1201 создаёт пустой сырой набор.
+
+Для временных сетевых ошибок и ошибок доступности
+источника допускается не более двух попыток получения
+данных. Остальные доменные ошибки не повторяются.
 
 ### Ошибки
 
-| Код | Причина | Результат |
+| Код | Причина | Состояние Job |
 |---|---|---|
-| `invalid_import_request` | Некорректный период или недопустимые параметры CLI | Job не создаётся |
-| `dataset_unavailable` | Набор отсутствует в каталоге или указан неизвестный параметр набора (HAPI 1406/1407) | Job становится `Failed` |
-| `intermagnet_request_rejected` | HAPI вернул ошибку параметров/ограничения (HAPI 14xx) | Job становится `Failed`; сырой набор не публикуется |
-| `intermagnet_unavailable` | Сетевой тайм-аут или ошибка сервера/upstream (HAPI 15xx) после ограниченных повторов | Job становится `Failed`; сырой набор не публикуется |
-| `storage_error` | Не удалось сохранить ответ или метаданные локально | Job не становится `Completed`; частичный набор не публикуется |
+| invalid_import_request | Неверные параметры или период | Job не создаётся |
+| dataset_unavailable | Неизвестный набор или параметр HAPI | Failed |
+| intermagnet_request_rejected | Ошибка запроса HAPI | Failed |
+| intermagnet_unavailable | Источник недоступен после повторов | Failed |
+| intermagnet_invalid_response | Некорректный статус, метаданные или тело ответа | Failed |
+| storage_error | Ошибка сохранения | Failed |
+
+В П3 проверяются тип ответа, HAPI status,
+наличие базовых метаданных и структура JSON.
+
+Полное сопоставление измерений с метаданными info
+будет реализовано при подключении реального источника.
 
 ## Tool 2 — Processing Tool
 
-Назначение: обработать локально сохранённый сырой набор выбранным методом и сохранить отдельный результат. Метод и параметры выбираются пользователем; контракт не придумывает математический алгоритм.
+Имя операции в Registry: `process`.
+
+Тип Job: PROCESS.
+
+### Назначение
+
+Обработать существующий сырой набор и сохранить
+отдельный обработанный результат.
 
 ### Вход
 
 ```text
 ProcessingRequest {
-  raw_dataset_id: string
-  method_id: string
-  parameters: object
-  idempotency_key: string
+    raw_dataset_id: string
+    method_id: string
+    parameters: object
+    idempotency_key: string
 }
 ```
 
-### Результат
+Ключ идемпотентности передаётся Dispatcher отдельно.
+
+### Результат Tool
 
 ```text
 ProcessingResult {
-  job_id: string
-  processed_dataset_id: string
-  source_raw_dataset_id: string
-  method_id: string
-  parameters: object
-  completed_at: datetime
-  record_count: integer
-  result_metadata: object
+    job_id: string
+    processed_dataset_id: string
+    source_raw_dataset_id: string
+    method_id: string
+    parameters: object
+    completed_at: datetime
+    record_count: integer
+    result_metadata: object
 }
 ```
 
-Исходный набор не изменяется. Повторная обработка создаёт новый Job и новый `processed_dataset_id`, связанный с тем же сырьём.
+Сырой набор не изменяется.
+
+Новый запуск обработки с новым ключом создаёт
+отдельный Job и processed_dataset_id.
+
+### Метод практики 3
+
+`count_records` — демонстрационный метод подсчёта
+записей сырого набора.
+
+Параметры метода:
+
+```json
+{}
+```
+
+Пример результата для двух исходных записей:
+
+```json
+{
+  "records": [
+    {
+      "source_record_count": 2
+    }
+  ]
+}
+```
+
+Результат содержит одну итоговую запись.
+Поэтому record_count обработанного набора равен 1.
+
+Пустой сырой набор даёт source_record_count = 0.
+
+Метод предназначен для проверки работы доменного ядра.
+Он не является полноценным научным алгоритмом.
 
 ### Ошибки
 
-| Код | Причина | Результат |
+| Код | Причина | Состояние Job |
 |---|---|---|
-| `invalid_processing_request` | Нет метода или некорректны параметры | Job не создаётся |
-| `raw_dataset_not_found` | Сырой набор отсутствует в локальной БД | Job не создаётся |
-| `method_not_supported` | Метод не реализован/не зарегистрирован | Job не создаётся |
-| `processing_input_invalid` | Выбранный метод не может принять данный набор | Job становится `Failed`; результат не публикуется |
-| `processing_failed` | Во время вычисления произошла ошибка | Job становится `Failed`; результат не публикуется |
-| `storage_error` | Результат не удалось сохранить полностью | Job не становится `Completed` |
+| invalid_processing_request | Некорректные параметры | Job не создаётся |
+| raw_dataset_not_found | Сырой набор отсутствует | Job не создаётся |
+| method_not_supported | Метод не зарегистрирован | Job не создаётся |
+| processing_input_invalid | Некорректное содержимое набора | Failed |
+| processing_failed | Ошибка вычисления | Failed |
+| storage_error | Ошибка сохранения | Failed |
 
 ## Tool 3 — Local Data Query Tool
 
-Назначение: читать сырые и обработанные наборы из локальной БД. Внешний API не вызывается, обработка не запускается.
+Имя операции в Registry: `query`.
+
+Тип Job: отсутствует.
+
+### Назначение
+
+Читать сохранённые сырые и обработанные наборы
+без обращения к внешнему API и запуска обработки.
 
 ### Вход
 
 ```text
 DatasetQuery {
-  dataset_kind: "raw" | "processed"
-  dataset_id: string?
-  observatory_id: string?
-  source_raw_dataset_id: string?
-  time_range: { start: datetime, stop: datetime }?
-  limit: integer?
-  cursor: string?
+    dataset_kind: "raw" | "processed"
+    dataset_id: string?
+    observatory_id: string?
+    source_raw_dataset_id: string?
+    time_range: { start: datetime, stop: datetime }?
+    limit: integer?
+    cursor: string?
 }
 ```
 
@@ -146,40 +341,109 @@ DatasetQuery {
 
 ```text
 DatasetPage {
-  items: list<DatasetSummary>
-  next_cursor: string?
+    items: list<DatasetSummary>
+    next_cursor: string?
 }
 
 DatasetSummary {
-  dataset_id: string
-  dataset_kind: "raw" | "processed"
-  observatory_id: string?
-  source_raw_dataset_id: string?
-  time_range: object?
-  record_count: integer
-  created_at: datetime
-  provenance: object
+    dataset_id: string
+    dataset_kind: "raw" | "processed"
+    observatory_id: string?
+    source_raw_dataset_id: string?
+    time_range: object?
+    record_count: integer
+    created_at: datetime
+    provenance: object
 }
 ```
 
-Если задан `dataset_id`, Tool возвращает содержимое конкретного набора и его метаданные; иначе — страницу кратких описаний. Сортировка и предел размера страницы должны быть зафиксированы в реализации.
+При запросе по dataset_id возвращается описание
+конкретного набора с дополнительным полем content.
+
+При запросе списка поле content не возвращается.
+
+### Правила фильтрации и пагинации
+
+- Размер страницы по умолчанию — 100.
+- Допустимый limit — от 1 до 1000.
+- Основная сортировка — created_at по убыванию.
+- Дополнительная сортировка — dataset_id по возрастанию.
+- Фильтр time_range выбирает наборы, периоды которых
+  пересекаются с запрошенным интервалом.
+- source_raw_dataset_id применяется только
+  к обработанным наборам.
+- limit и cursor используются только при запросе списка.
+- Курсор связан с исходными фильтрами и размером страницы.
+- Неизвестный курсор или изменение фильтров
+  отклоняются с invalid_query.
+
+На первой странице создаётся снимок результатов.
+Появление новых наборов не изменяет этот снимок.
+
+Если следующей страницы нет, next_cursor равен null
+во внутреннем программном интерфейсе.
+
+Курсоры существуют в памяти текущего процесса.
+Срок жизни и очистка курсоров пока не реализованы.
 
 ### Ошибки
 
 | Код | Причина |
 |---|---|
-| `invalid_query` | Недопустимые фильтры, период, курсор или предел |
-| `dataset_not_found` | Запрошенный локальный набор не найден |
-| `storage_error` | Локальная БД недоступна или чтение завершилось ошибкой |
+| invalid_query | Недопустимые фильтры, период, предел или курсор |
+| dataset_not_found | Набор отсутствует или недоступен |
+| storage_error | Ошибка хранилища |
+
+## Общие ошибки ядра
+
+| Код | Причина |
+|---|---|
+| unknown_operation | Операция не зарегистрирована |
+| operation_already_registered | Имя операции уже занято |
+| invalid_parameters | Некорректная общая структура, ключ или параметры |
+| invalid_job_transition | Недопустимый переход Job |
+| idempotency_conflict | Ключ использован с другими параметрами |
+| job_not_found | Job не найден |
+| job_interrupted | Выполнение прервано |
+| internal_error | Непредвиденная внутренняя ошибка |
 
 ## Кто что проверяет
 
 | Уровень | Ответственность |
 |---|---|
-| CLI и сервис заданий (вызывающая сторона) | Проверяют структуру команды, обязательные поля, формат дат и ключ идемпотентности; создают Job и применяют допустимые переходы |
-| INTERMAGNET Import Tool | Сопоставляет параметры с каталогом HAPI, проверяет HAPI status и метаданные, сохраняет внешний ответ и происхождение |
-| Processing Tool | Проверяет наличие входа, поддержку метода и его параметров; записывает результат отдельно |
-| Local Data Query Tool | Проверяет локальные фильтры и предел страницы; читает только локальную БД |
-| Репозиторий | Обеспечивает целостное сохранение в рамках возможностей выбранной БД и сообщает ошибки вызывающей стороне |
+| CLI | Разбор внешней команды и преобразование полей |
+| Dispatcher | Общая структура запроса, идемпотентность и вызов валидации Tool |
+| Import Tool | Параметры импорта и базовая проверка ответа HAPI |
+| Processing Tool | Наличие сырого набора, метод и его параметры |
+| Query Tool | Фильтры, интервал, предел и курсор |
+| Job | Допустимые переходы состояний |
+| Repository | Хранение, уникальность ключей и согласованная видимость |
 
-Вызывающая сторона проверяет синтаксис до создания Job. Tool повторно проверяет ограничения, зависящие от внешнего каталога, содержимого набора или выбранного метода. Ошибка валидации не должна создавать готовый набор.
+В практике 3 проверка параметров реализована
+через методы validate() соответствующих Tool.
+
+Dispatcher вызывает их до создания нового Job.
+
+## Соответствие внутреннего интерфейса и CLI
+
+Внутренний Python-интерфейс использует snake_case.
+Целевой внешний JSON-контракт CLI использует camelCase.
+
+Например:
+
+- observatoryId → observatory_id;
+- rawDatasetId → raw_dataset_id;
+- methodId → method_id;
+- datasetKind → dataset_kind;
+- idempotencyKey → отдельный аргумент Dispatcher;
+- timeRange.start и timeRange.stop → start и stop
+  при импорте;
+- timeRange → time_range при чтении.
+
+Внешнее значение kind = processing соответствует
+внутреннему JobKind.PROCESS со значением process.
+
+Будущий CLI-адаптер должен выполнять это преобразование,
+добавлять поле ok и форматировать ответы.
+
+Сам CLI-адаптер на практике 3 не реализован.

@@ -2,15 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "cli.schema.json",
   "title": "Контракт CLI",
-  "description": "Одна JSON-схема для команд, подаваемых в CLI через stdin или файл, и JSON-ответов CLI.",
+  "description": "Целевой JSON-контракт команд и ответов локальной программы. CLI-адаптер в практике 3 не реализован.",
   "$defs": {
     "timeRange": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "start",
-        "stop"
-      ],
+      "required": ["start", "stop"],
       "properties": {
         "start": {
           "type": "string",
@@ -40,9 +37,8 @@
         },
         "observatoryId": {
           "type": "string",
-          "minLength": 3,
-          "maxLength": 3,
-          "description": "Трёхбуквенный код обсерватории из INTERMAGNET HAPI catalog."
+          "pattern": "^[A-Z]{3}$",
+          "description": "Трёхбуквенный IAGA-код обсерватории."
         },
         "publicationState": {
           "type": "string",
@@ -56,19 +52,11 @@
         },
         "cadence": {
           "type": "string",
-          "enum": [
-            "PT1M",
-            "PT1S"
-          ]
+          "enum": ["PT1M", "PT1S"]
         },
         "components": {
           "type": "string",
-          "enum": [
-            "xyzf",
-            "hdzf",
-            "diff",
-            "native"
-          ]
+          "enum": ["xyzf", "hdzf", "diff", "native"]
         },
         "timeRange": {
           "$ref": "#/$defs/timeRange"
@@ -113,49 +101,80 @@
     "queryCommand": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "command",
-        "datasetKind"
-      ],
+      "required": ["command", "datasetKind"],
       "properties": {
         "command": {
           "const": "query"
         },
         "datasetKind": {
           "type": "string",
-          "enum": [
-            "raw",
-            "processed"
-          ]
+          "enum": ["raw", "processed"]
         },
         "datasetId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "observatoryId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "sourceRawDatasetId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "timeRange": {
           "$ref": "#/$defs/timeRange"
         },
         "limit": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 100
         },
         "cursor": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["datasetId"]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": ["limit"]
+                },
+                {
+                  "required": ["cursor"]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "datasetKind": {
+                "const": "raw"
+              }
+            },
+            "required": ["datasetKind"]
+          },
+          "then": {
+            "not": {
+              "required": ["sourceRawDatasetId"]
+            }
+          }
+        }
+      ]
     },
     "jobStatusCommand": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "command",
-        "jobId"
-      ],
+      "required": ["command", "jobId"],
       "properties": {
         "command": {
           "const": "job-status"
@@ -166,35 +185,40 @@
         }
       }
     },
-    "error": {
+    "errorCode": {
+      "type": "string",
+      "enum": [
+        "invalid_command",
+        "unknown_operation",
+        "operation_already_registered",
+        "invalid_parameters",
+        "invalid_import_request",
+        "dataset_unavailable",
+        "intermagnet_request_rejected",
+        "intermagnet_unavailable",
+        "intermagnet_invalid_response",
+        "invalid_processing_request",
+        "raw_dataset_not_found",
+        "method_not_supported",
+        "processing_input_invalid",
+        "processing_failed",
+        "invalid_query",
+        "dataset_not_found",
+        "invalid_job_transition",
+        "idempotency_conflict",
+        "job_not_found",
+        "job_interrupted",
+        "storage_error",
+        "internal_error"
+      ]
+    },
+    "errorBody": {
       "type": "object",
-      "required": [
-        "ok",
-        "code",
-        "message"
-      ],
+      "additionalProperties": false,
+      "required": ["code", "message"],
       "properties": {
-        "ok": {
-          "const": false
-        },
         "code": {
-          "type": "string",
-          "enum": [
-            "invalid_import_request",
-            "dataset_unavailable",
-            "intermagnet_request_rejected",
-            "intermagnet_unavailable",
-            "invalid_processing_request",
-            "raw_dataset_not_found",
-            "method_not_supported",
-            "processing_input_invalid",
-            "processing_failed",
-            "invalid_query",
-            "dataset_not_found",
-            "invalid_job_transition",
-            "idempotency_conflict",
-            "storage_error"
-          ]
+          "$ref": "#/$defs/errorCode"
         },
         "message": {
           "type": "string"
@@ -202,53 +226,117 @@
         "details": {
           "type": "object"
         }
-      },
-      "additionalProperties": false
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "code", "message"],
+      "properties": {
+        "ok": {
+          "const": false
+        },
+        "code": {
+          "$ref": "#/$defs/errorCode"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        }
+      }
+    },
+    "jobState": {
+      "type": "string",
+      "enum": [
+        "Created",
+        "Downloading",
+        "Processing",
+        "Completed",
+        "Failed"
+      ]
     },
     "job": {
       "type": "object",
-      "required": [
-        "ok",
-        "jobId",
-        "kind",
-        "status"
-      ],
+      "additionalProperties": false,
+      "required": ["ok", "jobId", "kind", "status"],
       "properties": {
         "ok": {
           "const": true
         },
         "jobId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "kind": {
           "type": "string",
-          "enum": [
-            "import",
-            "processing"
-          ]
+          "enum": ["import", "processing"]
         },
         "status": {
-          "type": "string",
-          "enum": [
-            "Created",
-            "Downloading",
-            "Processing",
-            "Completed",
-            "Failed"
-          ]
+          "$ref": "#/$defs/jobState"
         },
         "datasetId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
+        },
+        "error": {
+          "$ref": "#/$defs/errorBody"
         }
-      },
-      "additionalProperties": false
+      }
+    },
+    "datasetSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "datasetId",
+        "datasetKind",
+        "recordCount",
+        "createdAt",
+        "provenance"
+      ],
+      "properties": {
+        "datasetId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "datasetKind": {
+          "type": "string",
+          "enum": ["raw", "processed"]
+        },
+        "observatoryId": {
+          "type": ["string", "null"]
+        },
+        "sourceRawDatasetId": {
+          "type": ["string", "null"]
+        },
+        "timeRange": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/timeRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recordCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "provenance": {
+          "type": "object"
+        }
+      }
     },
     "datasetPage": {
       "type": "object",
-      "required": [
-        "ok",
-        "items"
-      ],
+      "additionalProperties": false,
+      "required": ["ok", "items"],
       "properties": {
         "ok": {
           "const": true
@@ -256,63 +344,93 @@
         "items": {
           "type": "array",
           "items": {
-            "type": "object"
+            "$ref": "#/$defs/datasetSummary"
           }
         },
         "nextCursor": {
-          "type": "string"
+          "type": ["string", "null"]
         }
-      },
-      "additionalProperties": false
+      }
     },
-    "jobStatus": {
+    "datasetDetail": {
       "type": "object",
+      "additionalProperties": false,
       "required": [
         "ok",
-        "jobId",
-        "status"
+        "datasetId",
+        "datasetKind",
+        "recordCount",
+        "createdAt",
+        "provenance",
+        "content"
       ],
       "properties": {
         "ok": {
           "const": true
         },
-        "jobId": {
-          "type": "string"
-        },
-        "status": {
+        "datasetId": {
           "type": "string",
-          "enum": [
-            "Created",
-            "Downloading",
-            "Processing",
-            "Completed",
-            "Failed"
+          "minLength": 1
+        },
+        "datasetKind": {
+          "type": "string",
+          "enum": ["raw", "processed"]
+        },
+        "observatoryId": {
+          "type": ["string", "null"]
+        },
+        "sourceRawDatasetId": {
+          "type": ["string", "null"]
+        },
+        "timeRange": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/timeRange"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
+        "recordCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "provenance": {
+          "type": "object"
+        },
+        "content": {
+          "type": "object"
+        }
+      }
+    },
+    "jobStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "jobId", "status"],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "jobId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/jobState"
+        },
         "datasetId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "error": {
-          "type": "object",
-          "required": [
-            "code",
-            "message"
-          ],
-          "properties": {
-            "code": {
-              "type": "string"
-            },
-            "message": {
-              "type": "string"
-            },
-            "details": {
-              "type": "object"
-            }
-          },
-          "additionalProperties": false
+          "$ref": "#/$defs/errorBody"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "request": {
       "oneOf": [
@@ -340,6 +458,9 @@
         },
         {
           "$ref": "#/$defs/datasetPage"
+        },
+        {
+          "$ref": "#/$defs/datasetDetail"
         },
         {
           "$ref": "#/$defs/jobStatus"
